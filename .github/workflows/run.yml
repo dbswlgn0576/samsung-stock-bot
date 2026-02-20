@@ -1,0 +1,27 @@
+name: Samsung Stock Bot
+
+on:
+  schedule:
+    # 1. 매일 한국 시간 오전 7시 (UTC 22:00 전날)
+    - cron: '0 22 * * *'
+    # 2. 매일 한국 시간 오후 8시 (UTC 11:00)
+    - cron: '0 11 * * *'
+  workflow_dispatch: # 수동으로 즉시 실행해볼 수 있는 버튼 생성
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run script
+        run: python main.py
