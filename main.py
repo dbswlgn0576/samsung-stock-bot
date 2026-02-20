@@ -11,29 +11,33 @@ CHAT_ID = "7216858159"
 def send_message(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except:
-        pass
+    try: requests.post(url, json=payload, timeout=10)
+    except: pass
 
 def get_news_brief():
+    """뉴스 수집 강화 버전 (종목뉴스 + 시황뉴스 병합)"""
+    news_list = []
     try:
+        # 1. 삼성전자 종목 뉴스
         url = "https://finance.naver.com/item/news_news.naver?code=005930"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=10)
         res.encoding = 'cp949'
         soup = BeautifulSoup(res.text, 'html.parser')
-        news_items = soup.select('.title a')
-        filtered = []
-        if news_items:
-            for news in news_items:
-                title = news.get_text().strip()
-                link = "https://finance.naver.com" + news['href']
-                if len(title) > 5:
-                    filtered.append(f"<b>• {title}</b>\n  🔗 <a href='{link}'>뉴스보기</a>")
-                if len(filtered) >= 3: break
-        return "📰 <b>주요 뉴스</b>\n" + "\n\n".join(filtered) if filtered else "📰 표시할 뉴스가 없습니다."
-    except: return "📰 뉴스 정보 수집 중"
+        titles = soup.select('.title a')
+        
+        for t in titles:
+            text = t.get_text().strip()
+            link = "https://finance.naver.com" + t['href']
+            if len(text) > 10:
+                news_list.append(f"<b>• {text}</b>\n  🔗 <a href='{link}'>뉴스보기</a>")
+            if len(news_list) >= 4: break
+            
+        if not news_list:
+            return "📰 <b>주요 뉴스</b>\n현재 실시간 등록된 뉴스가 없습니다."
+        return "📰 <b>주요 뉴스</b>\n" + "\n\n".join(news_list)
+    except:
+        return "📰 뉴스 정보 수집 중 오류"
 
 def format_buy_sell(val_str):
     val_str = val_str.replace(',', '').strip()
@@ -44,27 +48,38 @@ def format_buy_sell(val_str):
 
 def get_market_data():
     try:
-        # 1. 글로벌 증시 (마이크론 포함)
-        tickers = {"^GSPC": "S&P 500", "^SOX": "필라반도체", "NVDA": "엔비디아", "TSM": "TSMC", "MU": "마이크론", "^IXIC": "나스닥"}
-        us_stats = []
+        # 1. 글로벌 지수 정렬 (S&P500 -> 나스닥 -> 필반체)
+        idx_tickers = {"^GSPC": "S&P 500", "^IXIC": "나스닥", "^SOX": "필라반도체"}
+        stock_tickers = {"NVDA": "엔비디아", "TSM": "TSMC", "MU": "마이크론"}
+        
+        us_indices = []
+        us_stocks = []
         sox_chg = 0
         us_date = ""
-        for sym, name in tickers.items():
-            try:
-                t = yf.Ticker(sym)
-                h = t.history(period="3d")
-                if not h.empty:
-                    curr, prev = h['Close'].iloc[-1], h['Close'].iloc[-2]
-                    chg = ((curr - prev) / prev) * 100
-                    if us_date == "": us_date = h.index[-1].strftime('%m/%d')
-                    if sym == "^SOX": sox_chg = chg
-                    price_str = f"${curr:,.2f}" if sym not in ["^SOX", "^IXIC", "^GSPC"] else f"{curr:,.2f}"
-                    us_stats.append(f"{'🔺' if chg > 0 else '🔹'} {name}: {price_str} ({chg:+.2f}%)")
-            except: continue
 
-        # 2. 삼성전자 주가
-        s_ticker = yf.Ticker("005930.KS")
-        s_h = s_ticker.history(period="3d")
+        # 지수 먼저 수집
+        for sym, name in idx_tickers.items():
+            t = yf.Ticker(sym)
+            h = t.history(period="3d")
+            if not h.empty:
+                curr, prev = h['Close'].iloc[-1], h['Close'].iloc[-2]
+                chg = ((curr - prev) / prev) * 100
+                if us_date == "": us_date = h.index[-1].strftime('%m/%d')
+                if sym == "^SOX": sox_chg = chg
+                us_indices.append(f"{'🔺' if chg > 0 else '🔹'} {name}: {curr:,.2f} ({chg:+.2f}%)")
+
+        # 주요 종목 수집
+        for sym, name in stock_tickers.items():
+            t = yf.Ticker(sym)
+            h = t.history(period="3d")
+            if not h.empty:
+                curr, prev = h['Close'].iloc[-1], h['Close'].iloc[-2]
+                chg = ((curr - prev) / prev) * 100
+                us_stocks.append(f"{'🔺' if chg > 0 else '🔹'} {name}: ${curr:,.2f} ({chg:+.2f}%)")
+
+        # 2. 삼성전자 데이터
+        s = yf.Ticker("005930.KS")
+        s_h = s.history(period="3d")
         curr_p, prev_p = s_h['Close'].iloc[-1], s_h['Close'].iloc[-2]
         chg_r = ((curr_p - prev_p) / prev_p) * 100
         vol = s_h['Volume'].iloc[-1]
@@ -89,26 +104,26 @@ def get_market_data():
                 prg_net = format_buy_sell(prg_td[1].get_text().strip())
         except: pass
 
-        msg = f"🌍 <b>글로벌 증시 ({us_date})</b>\n" + "\n".join(us_stats) + "\n\n"
+        # 메시지 조립
+        msg = f"🌍 <b>글로벌 증시 요약 ({us_date})</b>\n"
+        msg += "\n".join(us_indices) + "\n"
+        msg += "----------------------------\n"
+        msg += "\n".join(us_stocks) + "\n\n"
+        
         msg += f"🇰🇷 <b>삼성전자 현황 ({s_date})</b>\n"
         msg += f"현재가: <b>{int(curr_p):,}원</b> ({chg_r:+.2f}%)\n"
         msg += f"거래량: {int(vol):,d}주\n\n"
+        
         msg += f"📊 <b>최근 상세 수급</b>\n"
         msg += f"👤 개인: {p_net} / 🏢 기관: {i_net}\n"
         msg += f"🚩 <b>외인: {f_net}</b> / 💻 <b>프로그램: {prg_net}</b>\n\n"
         
-        # 4. 당일 단기 대응 가이드
         strategy = "💡 <b>장 시작 전 단기 대응 가이드</b>\n"
-        if sox_chg >= 1.5:
-            strategy += "<b>[강세 예상]</b> 필반지수 급등으로 삼성전자 '갭상승' 출발이 유력합니다. 장 초반 외인/프로그램 매수세 유지 시 강한 탄력이 기대됩니다."
-        elif 0.5 <= sox_chg < 1.5:
-            strategy += "<b>[우상향 기대]</b> 미 반도체 호조로 긍정적 출발이 예상됩니다. 다만 장중 수급 이탈 여부를 프로그램 추이로 꼭 확인하세요."
-        elif -0.5 < sox_chg < 0.5:
-            strategy += "<b>[혼조세]</b> 미 증시 모멘텀이 약합니다. 시초가 이후 전일 종가 지지 여부를 확인하며 박스권 대응이 유리합니다."
-        elif -1.5 < sox_chg <= -0.5:
-            strategy += "<b>[조정 유의]</b> 미 증시 하락으로 시초가 약세 가능성이 큽니다. 성급한 저가 매수보다 수급 진정을 기다리세요."
-        else:
-            strategy += "<b>[약세 경계]</b> 미 반도체주 투매로 하락 압력이 매우 큽니다. 장 초반 투매 동참보다 오후장 진정 시점을 확인하세요."
+        if sox_chg >= 1.5: strategy += "<b>[강세 예상]</b> 반도체 지수 급등으로 강력한 갭상승이 유력합니다. 외인 매수 지속 시 홀딩 전략이 유리합니다."
+        elif 0.5 <= sox_chg < 1.5: strategy += "<b>[우상향 기대]</b> 견조한 미 증시 흐름을 이어받아 긍정적 출발이 예상됩니다. 9:30분 수급 전환 여부를 체크하세요."
+        elif -0.5 < sox_chg < 0.5: strategy += "<b>[혼조세]</b> 방향성 탐색 구간입니다. 시초가 이후 기관의 매매 방향에 따라 주가가 결정될 확률이 높습니다."
+        elif -1.5 < sox_chg <= -0.5: strategy += "<b>[조정 유의]</b> 하락 압력이 존재합니다. 프로그램 매도세가 진정될 때까지 저가 매수는 천천히 고려하세요."
+        else: strategy += "<b>[약세 경계]</b> 미 반도체주 투매 영향으로 시초가 충격이 예상됩니다. 보수적인 관점으로 대응하세요."
         
         return msg + strategy
     except Exception as e:
@@ -120,4 +135,4 @@ if __name__ == "__main__":
     n_data = get_news_brief()
     title = f"☀️ <b>삼성전자 장 시작 전 브리핑</b>" if now.hour < 12 else f"🌙 <b>삼성전자 장 마감 후 브리핑</b>"
     final_msg = f"{title} ({now.strftime('%m/%d %H:%M')})\n\n{m_data}\n\n{n_data}"
-    send_message(final_msg)
+    send_message
